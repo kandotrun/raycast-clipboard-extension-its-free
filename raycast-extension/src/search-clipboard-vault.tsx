@@ -99,7 +99,9 @@ function truncateContent(content: string, maxLen = 80): string {
 async function openDb(): Promise<Database> {
   const prefs = getPreferenceValues<Preferences>();
   const dbPath = resolveDbPath(prefs.databasePath);
-  const SQL = await initSqlJs();
+  const SQL = await initSqlJs({
+    locateFile: (file: string) => path.join(environment.assetsPath, file),
+  });
   const fileBuffer = fs.readFileSync(dbPath);
   return new SQL.Database(fileBuffer);
 }
@@ -258,7 +260,7 @@ export default function SearchClipboardVault() {
                 accessories={[{ text: subtitle }]}
                 detail={
                   <List.Item.Detail
-                    markdown={`\`\`\`\n${entry.content}\n\`\`\``}
+                    markdown={entry.content}
                   />
                 }
                 actions={
