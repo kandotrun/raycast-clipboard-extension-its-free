@@ -6,7 +6,7 @@ import Foundation
 
 class ClipboardDB {
     private var db: OpaquePointer?
-    private let dbPath: String
+    let dbPath: String
 
     init(path: String) {
         self.dbPath = path
@@ -127,6 +127,23 @@ class ClipboardMonitor {
             return
         }
 
+        // Read image content (check before text — screenshots often have both)
+        if let tiffData = pasteboard.data(forType: .tiff) {
+            let hash = simpleHashData(tiffData)
+            if !db.isDuplicate(hash: hash) {
+                if let bitmapRep = NSBitmapImageRep(data: tiffData),
+                   let pngData = bitmapRep.representation(using: .png, properties: [:]) {
+                    let imagesDir = (db.dbPath as NSString).deletingLastPathComponent + "/images"
+                    try? FileManager.default.createDirectory(atPath: imagesDir, withIntermediateDirectories: true)
+                    let filename = "\(hash).png"
+                    let filepath = imagesDir + "/" + filename
+                    try? pngData.write(to: URL(fileURLWithPath: filepath))
+                    db.insert(content: filepath, contentType: "image", sourceApp: sourceApp, hash: hash)
+                }
+            }
+            return  // Don't also capture text representation of images
+        }
+
         // Read text content
         if let text = pasteboard.string(forType: .string), !text.isEmpty {
             let hash = simpleHash(text)
@@ -155,6 +172,16 @@ class ClipboardMonitor {
         for byte in string.utf8 {
             hash = ((hash << 5) &+ hash) &+ UInt64(byte)
         }
+        return String(hash, radix: 16)
+    }
+
+    private func simpleHashData(_ data: Data) -> String {
+        var hash: UInt64 = 5381
+        for byte in data.prefix(8192) {  // Hash first 8KB for speed
+            hash = ((hash << 5) &+ hash) &+ UInt64(byte)
+        }
+        // Include total size to differentiate similar-prefix files
+        hash = ((hash << 5) &+ hash) &+ UInt64(data.count)
         return String(hash, radix: 16)
     }
 }
