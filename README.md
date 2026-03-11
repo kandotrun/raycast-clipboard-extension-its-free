@@ -14,12 +14,13 @@ Raycast's built-in clipboard history is limited unless you pay $10/month for Ray
 ## Features
 
 - ♾️ **Unlimited history** — No cap on entries, ever
+- 🖼️ **Image support** — Screenshots and copied images saved as PNG with preview
 - 🔍 **Full-text search** — Find anything you've ever copied
 - 📌 **Pin entries** — Keep important items at the top
-- 🏷️ **Auto-detect content type** — URLs, emails, file paths, plain text
+- 🏷️ **Auto-detect content type** — URLs, emails, file paths, images, plain text
 - 📱 **Source app tracking** — Know where you copied from
 - 🔒 **Password manager exclusion** — Automatically skips 1Password, Bitwarden, Keychain Access
-- ⚡ **Fast** — SQLite is fast. No network calls. No cloud.
+- ⚡ **Fast** — SQLite + WASM. No network calls. No cloud.
 - 🖥️ **Fully local** — Your data never leaves your machine
 
 ## Setup
@@ -28,17 +29,20 @@ Raycast's built-in clipboard history is limited unless you pay $10/month for Ray
 
 ```bash
 cd daemon
-swiftc ClipboardVault.swift -o clipboard-vault -framework Cocoa -framework Foundation
+swiftc ClipboardVault.swift -o clipboard-vault -framework Cocoa -framework Foundation -O
 ```
 
 ### 2. Install the daemon
 
 ```bash
 # Copy the binary
-sudo cp clipboard-vault /usr/local/bin/
+mkdir -p ~/.local/bin
+cp clipboard-vault ~/.local/bin/
 
 # Install the LaunchAgent (auto-start on login)
 cp com.kandotrun.clipboard-vault.plist ~/Library/LaunchAgents/
+
+# Edit the plist if needed — update the binary path to ~/.local/bin/clipboard-vault
 
 # Start the daemon
 launchctl load ~/Library/LaunchAgents/com.kandotrun.clipboard-vault.plist
@@ -66,9 +70,18 @@ Go to **Raycast Settings → Extensions → Clipboard Vault → Search Clipboard
 | Action | Shortcut |
 |--------|----------|
 | Paste to active app | `Enter` |
+| Copy image to clipboard | `Enter` (for image entries) |
 | Copy to clipboard | `⌘ Enter` |
 | Pin / Unpin | `⌘⇧P` |
 | Delete entry | `⌘ Delete` |
+
+## Image Support
+
+The daemon captures images from the clipboard (screenshots, copied images) and saves them as PNG files to `~/.clipboard-vault/images/`. The Raycast extension shows image previews in the detail panel and lets you copy images back to the clipboard.
+
+- Images are checked before text (screenshots often set both)
+- Duplicate detection uses a hash of the first 8KB + total size
+- Images are stored as PNG regardless of the original format
 
 ## Configuration
 
@@ -89,14 +102,18 @@ Add any app names to `excludedApps` to prevent their clipboard data from being s
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │  NSPasteboard   │────▶│  Swift Daemon     │────▶│  SQLite DB      │
 │  (system)       │     │  (0.5s polling)   │     │  (~/.clipboard- │
-│                 │     │                   │     │   vault/)       │
+│                 │     │  text + images    │     │   vault/)       │
 └─────────────────┘     └──────────────────┘     └────────┬────────┘
                                                           │
-                                                          │ reads
+                              ┌────────────────┐          │ reads
+                              │  PNG images    │          │
+                              │  (~/.clipboard-│          │
+                              │   vault/images)│          │
+                              └────────────────┘          │
                                                           ▼
                                                  ┌─────────────────┐
                                                  │  Raycast Ext    │
-                                                 │  (better-sqlite3│
+                                                 │  (sql.js WASM   │
                                                  │   + React)      │
                                                  └─────────────────┘
 ```
@@ -107,7 +124,7 @@ Add any app names to `excludedApps` to prevent their clipboard data from being s
 # Stop and remove the daemon
 launchctl unload ~/Library/LaunchAgents/com.kandotrun.clipboard-vault.plist
 rm ~/Library/LaunchAgents/com.kandotrun.clipboard-vault.plist
-sudo rm /usr/local/bin/clipboard-vault
+rm ~/.local/bin/clipboard-vault
 
 # Remove data
 rm -rf ~/.clipboard-vault
