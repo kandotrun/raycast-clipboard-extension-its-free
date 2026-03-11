@@ -25,11 +25,10 @@
   ],
   "dependencies": {
     "@raycast/api": "^1.93.2",
-    "better-sqlite3": "^11.8.1"
+    "sql.js": "^1.12.0"
   },
   "devDependencies": {
     "@raycast/eslint-config": "^1.0.11",
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "22.13.14",
     "@types/react": "19.0.12",
     "eslint": "^8.57.1",

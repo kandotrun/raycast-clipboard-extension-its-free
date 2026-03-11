@@ -8,11 +8,13 @@ import {
   Toast,
   confirmAlert,
   Alert,
+  environment,
 } from "@raycast/api";
-import { useState, useEffect, useMemo, useCallback } from "react";
-import Database from "better-sqlite3";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { homedir } from "os";
 import path from "path";
+import fs from "fs";
+import initSqlJs, { type Database } from "sql.js";
 
 interface ClipboardEntry {
   id: number;
@@ -35,12 +37,6 @@ function resolveDbPath(dbPath: string): string {
     return path.join(homedir(), dbPath.slice(1));
   }
   return dbPath;
-}
-
-function getDb(): Database.Database {
-  const prefs = getPreferenceValues<Preferences>();
-  const dbPath = resolveDbPath(prefs.databasePath);
-  return new Database(dbPath, { readonly: false });
 }
 
 function getIcon(contentType: string): Icon {
@@ -100,28 +96,56 @@ function truncateContent(content: string, maxLen = 80): string {
   return firstLine.slice(0, maxLen) + "…";
 }
 
+async function openDb(): Promise<Database> {
+  const prefs = getPreferenceValues<Preferences>();
+  const dbPath = resolveDbPath(prefs.databasePath);
+  const SQL = await initSqlJs();
+  const fileBuffer = fs.readFileSync(dbPath);
+  return new SQL.Database(fileBuffer);
+}
+
+function saveDb(db: Database): void {
+  const prefs = getPreferenceValues<Preferences>();
+  const dbPath = resolveDbPath(prefs.databasePath);
+  const data = db.export();
+  const buffer = Buffer.from(data);
+  fs.writeFileSync(dbPath, buffer);
+}
+
+function queryEntries(db: Database, search: string): ClipboardEntry[] {
+  let stmt;
+  if (search) {
+    stmt = db.prepare(
+      "SELECT id, content, content_type, source_app, content_hash, created_at, pinned FROM clipboard WHERE content LIKE $search ORDER BY pinned DESC, created_at DESC LIMIT $limit"
+    );
+    stmt.bind({ $search: `%${search}%`, $limit: PAGE_SIZE });
+  } else {
+    stmt = db.prepare(
+      "SELECT id, content, content_type, source_app, content_hash, created_at, pinned FROM clipboard ORDER BY pinned DESC, created_at DESC LIMIT $limit"
+    );
+    stmt.bind({ $limit: PAGE_SIZE });
+  }
+
+  const rows: ClipboardEntry[] = [];
+  while (stmt.step()) {
+    const row = stmt.getAsObject() as unknown as ClipboardEntry;
+    rows.push(row);
+  }
+  stmt.free();
+  return rows;
+}
+
 export default function SearchClipboardVault() {
   const [entries, setEntries] = useState<ClipboardEntry[]>([]);
   const [searchText, setSearchText] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadEntries = useCallback((search: string) => {
+  const loadEntries = useCallback(async (search: string) => {
     setIsLoading(true);
     try {
-      const db = getDb();
-      let rows: ClipboardEntry[];
-      if (search) {
-        const stmt = db.prepare(
-          "SELECT * FROM clipboard WHERE content LIKE ? ORDER BY pinned DESC, created_at DESC LIMIT ?",
-        );
-        rows = stmt.all(`%${search}%`, PAGE_SIZE) as ClipboardEntry[];
-      } else {
-        const stmt = db.prepare(
-          "SELECT * FROM clipboard ORDER BY pinned DESC, created_at DESC LIMIT ?",
-        );
-        rows = stmt.all(PAGE_SIZE) as ClipboardEntry[];
-      }
+      const db = await openDb();
+      const rows = queryEntries(db, search);
       db.close();
       setEntries(rows);
       setError(null);
@@ -152,9 +176,13 @@ export default function SearchClipboardVault() {
   const togglePin = useCallback(
     async (entry: ClipboardEntry) => {
       try {
-        const db = getDb();
+        const db = await openDb();
         const newPinned = entry.pinned ? 0 : 1;
-        db.prepare("UPDATE clipboard SET pinned = ? WHERE id = ?").run(newPinned, entry.id);
+        db.run("UPDATE clipboard SET pinned = $pinned WHERE id = $id", {
+          $pinned: newPinned,
+          $id: entry.id,
+        });
+        saveDb(db);
         db.close();
         await showToast({ style: Toast.Style.Success, title: newPinned ? "Pinned" : "Unpinned" });
         loadEntries(searchText);
@@ -178,8 +206,9 @@ export default function SearchClipboardVault() {
       });
       if (!confirmed) return;
       try {
-        const db = getDb();
-        db.prepare("DELETE FROM clipboard WHERE id = ?").run(entry.id);
+        const db = await openDb();
+        db.run("DELETE FROM clipboard WHERE id = $id", { $id: entry.id });
+        saveDb(db);
         db.close();
         await showToast({ style: Toast.Style.Success, title: "Deleted" });
         loadEntries(searchText);
