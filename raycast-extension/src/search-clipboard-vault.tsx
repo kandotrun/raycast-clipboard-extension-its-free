@@ -9,6 +9,7 @@ import {
   confirmAlert,
   Alert,
   environment,
+  Clipboard,
 } from "@raycast/api";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { homedir } from "os";
@@ -45,6 +46,8 @@ function getIcon(contentType: string): Icon {
       return Icon.Link;
     case "email":
       return Icon.Envelope;
+    case "image":
+      return Icon.Image;
     case "path":
       return Icon.Finder;
     default:
@@ -256,16 +259,16 @@ export default function SearchClipboardVault() {
               <List.Item
                 key={entry.id}
                 icon={entry.pinned ? Icon.Pin : getIcon(entry.content_type)}
-                title={truncateContent(entry.content)}
+                title={entry.content_type === "image" ? "Image" : truncateContent(entry.content)}
                 accessories={[{ text: subtitle }]}
                 detail={
                   <List.Item.Detail
-                    markdown={entry.content}
+                    markdown={entry.content_type === "image" ? `![clipboard image](file://${entry.content})` : entry.content}
                   />
                 }
                 actions={
                   <ActionPanel>
-                    <Action.Paste title="Paste to Active App" content={entry.content} />
+                    {entry.content_type === "image" ? (<Action title="Copy Image" icon={Icon.Image} onAction={async () => { await Clipboard.copy({ file: entry.content }); await showToast({ style: Toast.Style.Success, title: "Image copied" }); }} />) : (<Action.Paste title="Paste to Active App" content={entry.content} />)}
                     <Action.CopyToClipboard
                       title="Copy to Clipboard"
                       content={entry.content}
