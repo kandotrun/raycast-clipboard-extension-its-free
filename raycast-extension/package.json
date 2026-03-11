@@ -1,0 +1,44 @@
+{
+  "name": "clipboard-vault",
+  "title": "Clipboard Vault",
+  "description": "Unlimited clipboard history powered by ClipboardVault daemon",
+  "icon": "command-icon.png",
+  "author": "clipboard-vault",
+  "license": "MIT",
+  "commands": [
+    {
+      "name": "search-clipboard-vault",
+      "title": "Search Clipboard Vault",
+      "description": "Search and paste from clipboard history",
+      "mode": "view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "databasePath",
+      "title": "Database Path",
+      "description": "Path to the ClipboardVault SQLite database",
+      "type": "textfield",
+      "default": "~/.clipboard-vault/clipboard.db",
+      "required": false
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^1.93.2",
+    "better-sqlite3": "^11.8.1"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^1.0.11",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "22.13.14",
+    "@types/react": "19.0.12",
+    "eslint": "^8.57.1",
+    "typescript": "^5.8.2"
+  },
+  "scripts": {
+    "build": "ray build",
+    "dev": "ray develop",
+    "fix-lint": "ray lint --fix",
+    "lint": "ray lint"
+  }
+}
