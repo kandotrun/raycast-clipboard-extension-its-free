@@ -11,7 +11,7 @@ import {
   environment,
   Clipboard,
 } from "@raycast/api";
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { homedir } from "os";
 import path from "path";
 import fs from "fs";
@@ -99,6 +99,17 @@ function truncateContent(content: string, maxLen = 80): string {
   return firstLine.slice(0, maxLen) + "…";
 }
 
+function formatTimestamp(timestamp: number): string {
+  const date = new Date(timestamp * 1000);
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 async function openDb(): Promise<Database> {
   const prefs = getPreferenceValues<Preferences>();
   const dbPath = resolveDbPath(prefs.databasePath);
@@ -140,6 +151,28 @@ function queryEntries(db: Database, search: string): ClipboardEntry[] {
   return rows;
 }
 
+function getDetailMarkdown(entry: ClipboardEntry): string {
+  const metaLines: string[] = [];
+  if (entry.source_app) metaLines.push(`**App:** ${entry.source_app}`);
+  metaLines.push(`**Type:** ${entry.content_type}`);
+  metaLines.push(`**Date:** ${formatTimestamp(entry.created_at)}`);
+  metaLines.push(`**Length:** ${entry.content.length} chars`);
+  const metaHeader = metaLines.join("  \n");
+
+  if (entry.content_type === "image") {
+    return `${metaHeader}\n\n---\n\n![clipboard image](file://${entry.content})`;
+  }
+  if (entry.content_type === "url") {
+    return `${metaHeader}\n\n---\n\n[${entry.content}](${entry.content})\n\n\`\`\`\n${entry.content}\n\`\`\``;
+  }
+  return `${metaHeader}\n\n---\n\n\`\`\`\n${entry.content}\n\`\`\``;
+}
+
+interface GroupedSection {
+  title: string;
+  entries: ClipboardEntry[];
+}
+
 export default function SearchClipboardVault() {
   const [entries, setEntries] = useState<ClipboardEntry[]>([]);
   const [searchText, setSearchText] = useState("");
@@ -167,15 +200,58 @@ export default function SearchClipboardVault() {
     loadEntries(searchText);
   }, [searchText, loadEntries]);
 
+  const bumpEntry = useCallback(
+    async (entryId: number) => {
+      try {
+        const db = await openDb();
+        const now = Math.floor(Date.now() / 1000);
+        db.run("UPDATE clipboard SET created_at = $ts WHERE id = $id", {
+          $ts: now,
+          $id: entryId,
+        });
+        saveDb(db);
+        db.close();
+        await loadEntries(searchText);
+      } catch (e) {
+        await showToast({
+          style: Toast.Style.Failure,
+          title: "Failed to update entry",
+          message: e instanceof Error ? e.message : String(e),
+        });
+      }
+    },
+    [searchText, loadEntries],
+  );
+
   const grouped = useMemo(() => {
-    const sections: Record<string, ClipboardEntry[]> = {};
-    const order = ["Today", "Yesterday", "This Week", "Older"];
+    const pinnedEntries: ClipboardEntry[] = [];
+    const unpinned: ClipboardEntry[] = [];
     for (const entry of entries) {
-      const section = getDateSection(entry.created_at);
-      if (!sections[section]) sections[section] = [];
-      sections[section].push(entry);
+      if (entry.pinned) {
+        pinnedEntries.push(entry);
+      } else {
+        unpinned.push(entry);
+      }
     }
-    return order.filter((s) => sections[s]).map((s) => ({ title: s, entries: sections[s] }));
+
+    const sections: GroupedSection[] = [];
+    if (pinnedEntries.length > 0) {
+      sections.push({ title: "Pinned", entries: pinnedEntries });
+    }
+
+    const dateSections: Record<string, ClipboardEntry[]> = {};
+    const order = ["Today", "Yesterday", "This Week", "Older"];
+    for (const entry of unpinned) {
+      const section = getDateSection(entry.created_at);
+      if (!dateSections[section]) dateSections[section] = [];
+      dateSections[section].push(entry);
+    }
+    for (const s of order) {
+      if (dateSections[s]) {
+        sections.push({ title: s, entries: dateSections[s] });
+      }
+    }
+    return sections;
   }, [entries]);
 
   const togglePin = useCallback(
@@ -248,6 +324,13 @@ export default function SearchClipboardVault() {
       isShowingDetail
       throttle
     >
+      {!isLoading && entries.length === 0 && (
+        <List.EmptyView
+          icon={Icon.Clipboard}
+          title="No Clipboard Entries"
+          description={searchText ? "No entries match your search" : "Copy something to get started — your clipboard history will appear here."}
+        />
+      )}
       {grouped.map((section) => (
         <List.Section key={section.title} title={section.title}>
           {section.entries.map((entry) => {
@@ -262,18 +345,58 @@ export default function SearchClipboardVault() {
                 title={entry.content_type === "image" ? "Image" : truncateContent(entry.content)}
                 accessories={[{ text: subtitle }]}
                 detail={
-                  <List.Item.Detail
-                    markdown={entry.content_type === "image" ? `![clipboard image](file://${entry.content})` : entry.content}
-                  />
+                  <List.Item.Detail markdown={getDetailMarkdown(entry)} />
                 }
                 actions={
                   <ActionPanel>
-                    {entry.content_type === "image" ? (<Action title="Copy Image" icon={Icon.Image} onAction={async () => { await Clipboard.copy({ file: entry.content }); await showToast({ style: Toast.Style.Success, title: "Image copied" }); }} />) : (<Action.Paste title="Paste to Active App" content={entry.content} />)}
-                    <Action.CopyToClipboard
+                    {entry.content_type === "image" ? (
+                      <Action
+                        title="Copy Image"
+                        icon={Icon.Image}
+                        onAction={async () => {
+                          await Clipboard.copy({ file: entry.content });
+                          await showToast({ style: Toast.Style.Success, title: "Image copied" });
+                          await bumpEntry(entry.id);
+                        }}
+                      />
+                    ) : (
+                      <Action
+                        title="Paste to Active App"
+                        icon={Icon.Document}
+                        onAction={async () => {
+                          await Clipboard.paste(entry.content);
+                          await bumpEntry(entry.id);
+                        }}
+                      />
+                    )}
+                    <Action
                       title="Copy to Clipboard"
-                      content={entry.content}
+                      icon={Icon.CopyClipboard}
                       shortcut={{ modifiers: ["cmd"], key: "return" }}
+                      onAction={async () => {
+                        if (entry.content_type === "image") {
+                          await Clipboard.copy({ file: entry.content });
+                        } else {
+                          await Clipboard.copy(entry.content);
+                        }
+                        await showToast({ style: Toast.Style.Success, title: "Copied" });
+                        await bumpEntry(entry.id);
+                      }}
                     />
+                    {entry.content_type === "url" && (
+                      <Action.OpenInBrowser
+                        title="Open in Browser"
+                        url={entry.content}
+                        shortcut={{ modifiers: ["cmd"], key: "o" }}
+                      />
+                    )}
+                    {entry.content_type === "path" && (
+                      <Action.Open
+                        title="Open in Finder"
+                        target={entry.content}
+                        shortcut={{ modifiers: ["cmd"], key: "o" }}
+                      />
+                    )}
                     <Action
                       title={entry.pinned ? "Unpin Entry" : "Pin Entry"}
                       icon={Icon.Pin}
