@@ -152,20 +152,20 @@ function queryEntries(db: Database, search: string): ClipboardEntry[] {
 }
 
 function getDetailMarkdown(entry: ClipboardEntry): string {
-  const metaLines: string[] = [];
-  if (entry.source_app) metaLines.push(`**App:** ${entry.source_app}`);
-  metaLines.push(`**Type:** ${entry.content_type}`);
-  metaLines.push(`**Date:** ${formatTimestamp(entry.created_at)}`);
-  metaLines.push(`**Length:** ${entry.content.length} chars`);
-  const metaHeader = metaLines.join("  \n");
+  const metaParts: string[] = [];
+  if (entry.source_app) metaParts.push(entry.source_app);
+  metaParts.push(entry.content_type);
+  metaParts.push(formatTimestamp(entry.created_at));
+  metaParts.push(`${entry.content.length} chars`);
+  const metaLine = `\`${metaParts.join(" · ")}\``;
 
   if (entry.content_type === "image") {
-    return `${metaHeader}\n\n---\n\n![clipboard image](file://${entry.content})`;
+    return `![clipboard image](file://${entry.content})\n\n---\n${metaLine}`;
   }
   if (entry.content_type === "url") {
-    return `${metaHeader}\n\n---\n\n[${entry.content}](${entry.content})\n\n\`\`\`\n${entry.content}\n\`\`\``;
+    return `[${entry.content}](${entry.content})\n\n---\n${metaLine}`;
   }
-  return `${metaHeader}\n\n---\n\n\`\`\`\n${entry.content}\n\`\`\``;
+  return `\`\`\`\n${entry.content}\n\`\`\`\n\n---\n${metaLine}`;
 }
 
 interface GroupedSection {
